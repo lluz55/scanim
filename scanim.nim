@@ -30,7 +30,8 @@ var
     debug = false
     filesToWatch = initTable[string, FileWatched]()
     watchInterval = 1000
-    readForRemove: seq[string]
+    toBeRemoved: seq[string]
+    toBeAdded = initTable[string, FileWatched]()
 
 #TODO: add option to log to file
 #TODO: add option to use epoch format
@@ -60,14 +61,14 @@ proc watchFileInternal(file: string, fw: FileWatched) =
                 log("\tFile", file, "doesn't exists")
                 fw.status = FileNotExistError
                 if not fw.waitExist:
-                    readForRemove.add(file)
+                    toBeRemoved.add(file)
                 fw.listener(FileNotExistError)
         else:
             if fw.status != MovedDeleted:
                 fw.status = MovedDeleted
                 log("\tFile", file, "has been moved/deleted")
                 if not fw.waitExist:
-                    readForRemove.add(file)
+                    toBeRemoved.add(file)
                 fw.listener(MovedDeleted)
 
 #TODO: Add option for MD5 check
@@ -83,7 +84,7 @@ proc watchFile*(file: string, listener: proc(watchStatus: WatchStatus),
 
     if not filesToWatch.contains(file):
         let fw = FileWatched(listener: listener, waitExist: waitExist)
-        filesToWatch[file] = fw
+        toBeAdded[file] = fw
     else:
         log("File", file, "already been watched")
 
@@ -97,11 +98,14 @@ proc run() =
         for fn, fw in filesToWatch:
             watchFileInternal(fn, fw)
         sleep(watchInterval)
-        for rf in readForRemove:
-            filesToWatch.del(rf)
+        for tbr in toBeRemoved:
+            filesToWatch.del(tbr)
+        for fn, tba in toBeAdded:
+            filesToWatch[fn] = tba
+        toBeAdded.clear()
 
 template watchFiles*(assignment: untyped) =
     ## Wraps `watchFile` s calls to make sure that it will watch all files at the end
+    log("Starting...")
     assignment
     run()
-
