@@ -9,7 +9,7 @@
 
 from os import getFileInfo, sleep
 from strutils import join
-from times import Time, now
+from times import Time, now, getClockStr
 import tables
 
 type
@@ -37,7 +37,7 @@ var
 #TODO: add option to use epoch format
 template log(msgs: varargs[string]) =
     let t = now()
-    if debug: stdout.writeLine(t.hour, ":", t.minute, ":", t.second, " ",
+    if debug: stdout.writeLine(getClockStr(now()), " ",
             msgs.join(" "))
 
 proc watchFileInternal(file: string, fw: FileWatched) =
@@ -72,8 +72,8 @@ proc watchFileInternal(file: string, fw: FileWatched) =
                 fw.listener(MovedDeleted)
 
 #TODO: Add option for MD5 check
-proc watchFile*(file: string, listener: proc(watchStatus: WatchStatus),
-        waitExist = false) =
+proc watchFile*(file: string | TaintedString, listener: proc(
+        watchStatus: WatchStatus), waitExist = false) =
     ## Watches for changes in a file.
     ##
     ## `file`: file name.
@@ -104,8 +104,26 @@ proc run() =
             filesToWatch[fn] = tba
         toBeAdded.clear()
 
+proc runAsync() =
+    for fn, fw in filesToWatch:
+        watchFileInternal(fn, fw)
+    sleep(watchInterval)
+    for tbr in toBeRemoved:
+        filesToWatch.del(tbr)
+    for fn, tba in toBeAdded:
+        filesToWatch[fn] = tba
+    toBeAdded.clear()
+
+
 template watchFiles*(assignment: untyped) =
     ## Wraps `watchFile` s calls to make sure that it will watch all files at the end
     log("Starting...")
     assignment
     run()
+
+template watchFilesLoop*(interval: int, assignment: untyped) =
+    ## Loops through individual file whatchers and sleep for an interval
+    while true:
+        assignment
+        runAsync()
+        sleep(interval)
