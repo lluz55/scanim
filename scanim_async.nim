@@ -6,7 +6,7 @@ import times
 
 type
     FileStatus = enum
-        None,
+        None
         Changed
         DeletedMoved
         FileNotFoundError
@@ -18,7 +18,7 @@ type
         filename: string
         status: FileStatus
     FileWatched = ref object
-        listener: proc(watchStatus: FileStatus)
+        # listener: proc(watchStatus: FileStatus)
         waitExist: bool
         notFirstPass: bool
         lastAccess: Time
@@ -26,10 +26,11 @@ type
 
 var
     debug = false
-    listenerCh*: Channel[Watched] ## Global channel variable needed
+    listenerCh: Channel[Watched] ## Global channel variable needed
     registerCh: Channel[RegisterFile]
-    filesToWatch: Table[string, FileWatched]
-    filesWatched: Table[string, proc(status: FileStatus)]
+    filesToWatch {.threadVar.}: Table[string, FileWatched]
+    filesWatched {.threadVar.}: Table[string, proc(status: FileStatus)]
+    watchInterval = 1000
 
 
 listenerCh.open() ## Initialize channel
@@ -43,22 +44,39 @@ template log(msgs: varargs[string]) =
     if debug: stdout.writeLine(t.hour, ":", t.minute, ":", t.second, " ",
             msgs.join(" "))
 
-
-proc watchFile*(file: string, listener: proc(watchStatus: FileStatus),
-        waitExist = false) =
-    ## Watches for changes in a file.
-    ##
-    ## `file`: file name.
-    ##
-    ## `listener`: callback that will be called when the file changed.
-    ##
-    ## `waitExist`: file does not exist at beginning but will be moved or created at that location.
-
-    if not filesToWatch.contains(file):
-        let fw = FileWatched(listener: listener, waitExist: waitExist)
-        toBeAdded[file] = fw
-    else:
-        log("File", file, "already been watched")
+proc watchFile(file: string, fw: FileWatched) {.thread.} =
+    try:
+        let fInfo = getFileInfo(file)
+        if not fw.notFirstPass:
+            fw.lastAccess = fInfo.lastWriteTime
+            log("Watching file:", file)
+        else:
+            if fInfo.lastWriteTime != fw.lastAccess:
+                fw.lastAccess = fInfo.lastWriteTime
+                log("File", file, "has changed")
+                listenerCh.send((file, Changed))
+                # fw.listener(Changed)
+        fw.notFirstPass = true
+    except:
+        var timeChk: Time
+        if fw.lastAccess == timeChk:
+            fw.notFirstPass = false
+            if fw.status != FileNotFoundError:
+                fw.status = FileNotFoundError
+                log("File", file, "doesn't exists")
+                fw.status = FileNotFoundError
+                # if not fw.waitExist:
+                #     toBeRemoved.add(file)
+                # fw.listener(FileNotFoundError)
+                listenerCh.send((file, FileNotFoundError))
+        else:
+            if fw.status != DeletedMoved:
+                fw.status = DeletedMoved
+                log("File", file, "has been moved/deleted")
+                # if not fw.waitExist:
+                #     toBeRemoved.add(file)
+                # fw.listener(DeletedMoved)
+                listenerCh.send((file, DeletedMoved))
 
 
 proc runAsync(){.thread.} =
@@ -69,41 +87,47 @@ proc runAsync(){.thread.} =
         # listenerCh.send(("filename",None))
         (isReady, regMsg) = registerCh.tryRecv()
         if isReady:
-            echo regMsg.filename, " registered"
-            listenerCh.send(("teste.txt", UnknownError))
-        sleep(1000)
+            let fw = FileWatched(waitExist: regMsg.waitExists)
+            filesToWatch[regMsg.filename] = fw
+            log(regMsg.filename.capitalizeAscii(), " registered")
+        for fn, fw in filesToWatch:
+            watchFile(fn, fw)
+        sleep(watchInterval)
 
 
-# TODO: Implement callback. Store callbacks inside a variable
-# TODO:
+proc checkEvents() =
+    let (isReady, chMsg) = listenerCh.tryRecv()
+    if isReady:
+        if filesWatched.contains(chMsg.filename):
+            filesWatched[chMsg.filename](chMsg.status)
+
+
+proc setDebug*(on: bool) =
+    ## Set dubug. Defaults `false`
+    debug = on
+
+template watcherLoop(interval = 0, body: untyped) =
+    while true:
+        checkEvents()
+        body
+        sleep(interval)
+
+
 proc registerFile(filename: string, waitExists: bool, cb: proc(
-        status: FileStatus)) =
+        status: FileStatus)) {.thread.} =
     if not filesWatched.contains(filename):
         filesWatched[filename] = cb
         registerCh.send((filename, waitExists))
-        echo "registering '", filename, "' ..."
+        log("Registering '", filename, "'...")
+
+
+#---------------------- Example of use ----------------------#
 
 spawn runAsync()
 
-var
-    isReady: bool
-    chMsg: Watched
-    lap = 0
-
-registerFile("teste.txt", false, proc(status: FileStatus) =
+registerFile("test.txt", false, proc(status: FileStatus) =
     echo "status update: ", status
 )
 
-while true:
-    (isReady, chMsg) = listenerCh.tryRecv()
-
-    if isReady:
-        if chMsg.filename == "teste.txt":
-            echo "fn: ", chMsg.filename
-
-
-    echo "main thread"
-    inc lap
-    sleep(500)
-
-sync() # waits forever
+watcherLoop(1000) do:
+    discard
