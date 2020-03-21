@@ -1,5 +1,6 @@
 import threadpool
 import os, tables
+import strutils
 import times
 
 
@@ -24,15 +25,41 @@ type
         status: FileStatus
 
 var
+    debug = false
     listenerCh*: Channel[Watched] ## Global channel variable needed
     registerCh: Channel[RegisterFile]
     filesToWatch: Table[string, FileWatched]
     filesWatched: Table[string, proc(status: FileStatus)]
 
 
-listenerCh.open() # TODO: EXTERNAL
-                  # Initialize channel
+listenerCh.open() ## Initialize channel
 registerCh.open()
+
+
+#TODO: add option to log to file
+#TODO: add option to use epoch format
+template log(msgs: varargs[string]) =
+    let t = now()
+    if debug: stdout.writeLine(t.hour, ":", t.minute, ":", t.second, " ",
+            msgs.join(" "))
+
+
+proc watchFile*(file: string, listener: proc(watchStatus: FileStatus),
+        waitExist = false) =
+    ## Watches for changes in a file.
+    ##
+    ## `file`: file name.
+    ##
+    ## `listener`: callback that will be called when the file changed.
+    ##
+    ## `waitExist`: file does not exist at beginning but will be moved or created at that location.
+
+    if not filesToWatch.contains(file):
+        let fw = FileWatched(listener: listener, waitExist: waitExist)
+        toBeAdded[file] = fw
+    else:
+        log("File", file, "already been watched")
+
 
 proc runAsync(){.thread.} =
     ## Send data through channel
@@ -61,17 +88,15 @@ spawn runAsync()
 var
     isReady: bool
     chMsg: Watched
+    lap = 0
 
-var lap = 0
-
-registerFile("teste.txt", false, proc(status: FileStatus)=
+registerFile("teste.txt", false, proc(status: FileStatus) =
     echo "status update: ", status
 )
 
 while true:
     (isReady, chMsg) = listenerCh.tryRecv()
-    if lap == 3:
-        
+
     if isReady:
         if chMsg.filename == "teste.txt":
             echo "fn: ", chMsg.filename
