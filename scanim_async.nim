@@ -30,9 +30,7 @@ var
     listenerCh: Channel[Watched]
     registerCh: Channel[RegisterFile]
     filesToWatch {.threadVar.}: Table[string, FileWatched]
-    filesWatched {.threadVar.}: Table[string, proc(status: FileStatus)]
-    # TODO(lluz): added filename in callback:
-    # filesWatched {.threadVar.}: Table[string, proc(status: FileStatus, filename: string)]
+    filesWatched {.threadVar.}: Table[string, proc(filename: string, status: FileStatus)]
     watchInterval = 1000
     keepWatching = true
 
@@ -96,7 +94,7 @@ proc checkEvents() =
     let (isReady, chMsg) = listenerCh.tryRecv()
     if isReady:
         if filesWatched.contains(chMsg.filename):
-            filesWatched[chMsg.filename](chMsg.status)
+            filesWatched[chMsg.filename](chMsg.filename,chMsg.status)
 
 
 proc setDebug*(on: bool) =
@@ -130,7 +128,7 @@ template watcherLoop*(interval = 0, body: untyped) =
 
 
 proc registerFile*(filename: string, waitExists: bool, cb: proc(
-        status: FileStatus)) {.thread.} =
+        filename: string,status: FileStatus)) {.thread.} =
     var fname = filename
     if not filesWatched.contains(filename):
         filesWatched[fname] = cb
@@ -149,8 +147,8 @@ proc stopWatching*()=
 when is_main_module:
     spawn runAsync() 
 
-    registerFile("test.txt", true, proc(status: FileStatus) =
-        echo "status update: ", status
+    registerFile("test.txt", true, proc(filename: string, status: FileStatus) =
+        echo "File <", filename, ">: ", status
     )
 
     watcherLoop(1000) do:
