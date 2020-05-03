@@ -31,6 +31,8 @@ var
     registerCh: Channel[RegisterFile]
     filesToWatch {.threadVar.}: Table[string, FileWatched]
     filesWatched {.threadVar.}: Table[string, proc(status: FileStatus)]
+    # TODO(lluz): added filename in callback:
+    # filesWatched {.threadVar.}: Table[string, proc(status: FileStatus, filename: string)]
     watchInterval = 1000
     keepWatching = true
 
