@@ -3,7 +3,6 @@ import os, tables
 import strutils
 import times
 
-
 type    
     FileStatus = enum
         None
@@ -33,6 +32,7 @@ var
     filesToWatch {.threadVar.}: Table[string, FileWatched]
     filesWatched {.threadVar.}: Table[string, proc(status: FileStatus)]
     watchInterval = 1000
+    keepWatching = true
 
 
 listenerCh.open() ## Initialize channel
@@ -45,6 +45,7 @@ template log(msgs: varargs[string]) =
     let t = now()
     if debug: stdout.writeLine(t.monthday, "/", ord(t.month), "/", t.year, " ", t.hour, ":", t.minute, ":", t.second, " ",
             msgs.join(""))
+
 
 proc watchFile(file: var string, fw: FileWatched) {.thread.} =
     try:
@@ -89,6 +90,18 @@ proc watchFile(file: var string, fw: FileWatched) {.thread.} =
                 listenerCh.send((move(file), DeletedMoved))
 
 
+proc checkEvents() =
+    let (isReady, chMsg) = listenerCh.tryRecv()
+    if isReady:
+        if filesWatched.contains(chMsg.filename):
+            filesWatched[chMsg.filename](chMsg.status)
+
+
+proc setDebug*(on: bool) =
+    ## Set dubug. Defaults `false`
+    debug = on
+
+
 proc runAsync*(){.thread.} =
     ## Send data through channel
     var isReady: bool
@@ -105,22 +118,13 @@ proc runAsync*(){.thread.} =
         sleep(watchInterval)
 
 
-proc checkEvents() =
-    let (isReady, chMsg) = listenerCh.tryRecv()
-    if isReady:
-        if filesWatched.contains(chMsg.filename):
-            filesWatched[chMsg.filename](chMsg.status)
-
-
-proc setDebug*(on: bool) =
-    ## Set dubug. Defaults `false`
-    debug = on
-
 template watcherLoop*(interval = 0, body: untyped) =
     while true:
         checkEvents()
         body
         sleep(interval)
+        if not keepWatching:
+            break
 
 
 proc registerFile*(filename: string, waitExists: bool, cb: proc(
@@ -131,6 +135,9 @@ proc registerFile*(filename: string, waitExists: bool, cb: proc(
         registerCh.send((move(fname), waitExists))
         log("Registering <", filename, "> ...")
 
+
+proc stopWatching*()=
+    keepWatching = false
 
 
 # -------------------------------------------------------------#
